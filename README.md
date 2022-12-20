@@ -18,7 +18,7 @@ make                    (Compile it)
 `````````
 
 Use the official [RISC-V toolchain](https://github.com/riscv/riscv-gnu-toolchain/) for creating the executables. Follow
-the steps on the RISC-V page to download the toolchain. Use the master branch when generating the toolchain binaries.
+the steps on the RISC-V page to download the toolchain. Use the `rvv-next` branch when generating the toolchain binaries ( includes vector extension support ).
 
 Configure GCC for RISC-V with the following options to enable 32-bit
 code generation for general purpose riscv (newlib):
