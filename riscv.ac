@@ -15,12 +15,19 @@ AC_ARCH(riscv) {
 
   ac_mem DM:512M;
   ac_regbank RB:32;
-
   ac_regbank RBF:64;
+  ac_regbank RBV:128; // new
 
+  ac_reg id;
   ac_reg fflags;
   ac_reg frm;
   ac_reg fcsr;
+
+  ac_reg vstart;  // new
+  ac_reg vcsr;    // new
+  ac_reg vl;      // new
+  ac_reg vtype;   // new
+  ac_reg vlenb;   // new
 
   ac_wordsize 32;
 

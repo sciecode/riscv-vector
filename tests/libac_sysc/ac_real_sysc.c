@@ -38,7 +38,7 @@
 
 #define AC_SYSC(NAME,LOCATION) \
 int NAME() { \
-  goto *LOCATION; \
+  goto *(void *)LOCATION; \
 }
 
 #include "ac_syscall.def"

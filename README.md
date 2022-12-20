@@ -21,9 +21,9 @@ Use the official [RISC-V toolchain](https://github.com/riscv/riscv-gnu-toolchain
 the steps on the RISC-V page to download the toolchain. Use the master branch when generating the toolchain binaries.
 
 Configure GCC for RISC-V with the following options to enable 32-bit
-code generation for general purpose riscv(use newlib support):
+code generation for general purpose riscv (newlib):
 `````````
-./configure --prefix=/opt/riscv --with-arch=rv32imafd --with-abi=ilp32d
+./configure --prefix=/opt/riscv --with-arch=rv32imafdv --with-abi=ilp32d
 make
 `````````
 
@@ -71,6 +71,7 @@ The following topics need further improvement:
 
    - Atomic instructions needs multicore testing.
    - System instructions: CSRR* needs more testing.
+   - Complete Vector Extension floating point instructions.
 
 Float and double instructions proved to be stable as confirmed by paranoia.
 

@@ -5,16 +5,16 @@ AR       = riscv32-unknown-elf-ar
 RANLIB   = riscv32-unknown-elf-ranlib
 
 # Flags
-CFLAGS   = -O2 -g -I. -I.. -W -march=rv32imafd -std=gnu99 -mabi=ilp32d
+CFLAGS   = -O2 -g -I. -I.. -W -march=rv32imafdv -std=gnu99 -mabi=ilp32d -DARM
 ARFLAGS  = cr
 RM       = rm
 RMFLAGS  = -rf
 TARGET   = riscv32-unknown-elf
 
 
-ifneq (,$(findstring arm,$(TARGET)))
-CFLAGS+=-DARM
-endif
+# ifneq (,$(findstring arm,$(TARGET)))
+# CFLAGS+=-DARM
+# endif
 
 # Targets
 LIBSYSC = libac_sysc.a

@@ -12,6 +12,7 @@
 AC_ISA(riscv){
   ac_helper {
     #include "riscv_isa_helper.H"
+    #include "riscv_isa_helper_vector.H"
   };
 
   ac_format Type_R =
@@ -35,6 +36,14 @@ AC_ISA(riscv){
   ac_format Type_UJ =
     "%imm4:1 %imm1:10 %imm2:1 %imm3:8 %rd:5 %op:7";
 
+  // new
+  ac_format Type_V =
+    "[ %nf:3 %mew:1 %mop:2 | %amoop:5 %wd:1 | %funct6:6 ] %vm:1 %rs2:5 [ %rs1:5 | %imm5:5 ] %funct3:3 %vd:5 %op:7";
+
+  // new
+  ac_format Type_VM =
+    "[%imm3:1 %imm2:11 | %imm6:1 %imm5:1 %imm4:10 | %imm9:1 %imm8:1 %imm7:5 %rs2:5] %rs1:5 %funct3:3 %rd:5 %op:7";
+
 
   //RV32IB
   ac_instr<Type_R> ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND;
@@ -43,10 +52,9 @@ AC_ISA(riscv){
   ac_instr<Type_I> ADDI, SLTI, SLTIU, XORI, ORI, ANDI;
   ac_instr<Type_I> JALR;
   ac_instr<Type_I> SLLI, SRLI, SRAI;
-  ac_instr<Type_I> SCALL, SBREAK, RDCYCLE, RDCYCLEH, RDTIME, RDTIMEH, RDINSTRET;
+  ac_instr<Type_I> ECALL, SBREAK, RDCYCLE, RDCYCLEH, RDTIME, RDTIMEH, RDINSTRET;
   ac_instr<Type_I> RDINSTRETH;
   ac_instr<Type_I> FENCE, FENCE_I;
-
   ac_instr<Type_I> CSRRS, CSRRW, CSRRC;
 
 
@@ -88,6 +96,19 @@ AC_ISA(riscv){
   ac_instr<Type_R> FMV_D;
   ac_instr<Type_R> FEQ_D, FLT_D, FLE_D;
 
+  //RV-V
+  ac_instr<Type_VM> VSETVLI;
+  ac_instr<Type_V> VLE, VLSE, VSE, VSSE;
+  ac_instr<Type_V> VADDVV, VADDVX, VADDVI, VSUBVV, VSUBVX;
+  ac_instr<Type_V> VANDVV, VANDVX, VANDVI, VORVV, VORVX, VORVI, VXORVV, VXORVX, VXORVI;
+  ac_instr<Type_V> VMINUVV, VMINUVX, VMAXUVV, VMAXUVX;
+  ac_instr<Type_V> VMSEQVV, VMSEQVX, VMSEQVI, VMSNEVV, VMSNEVX, VMSNEVI;
+  ac_instr<Type_V> VMSLTVV, VMSLTVX, VMSLEVV, VMSLEVX, VMSLEVI, VMSGTVX, VMSGTVI;
+  ac_instr<Type_V> VSLLVV, VSLLVX, VSLLVI, VSRLVV, VSRLVX, VSRLVI;
+  ac_instr<Type_V> VMULVV;
+  ac_instr<Type_V> VMVXS, VMVSX;
+  ac_instr<Type_V> VREDSUMVS, VWREDSUMUVS;
+
   //RISC-V specific register names
   ac_asm_map reg {
     "$"[0..31] = [0..31];
@@ -102,6 +123,11 @@ AC_ISA(riscv){
   // Floating-point register names
   ac_asm_map freg {
     "$f"[0..31] = [0..31];
+  }
+
+  // Vector register names
+  ac_asm_map vreg {
+    "$v"[0..31] = [0..31];
   }
 
   ac_asm_map systemreg {
@@ -232,8 +258,8 @@ AC_ISA(riscv){
     AND.set_asm("AND %reg, %reg, %reg", rd, rs1, rs2);
     AND.set_decoder(funct7 = 0x00, funct3 = 0x7, op = 0x33);
 
-    SCALL.set_asm("SCALL");
-    SCALL.set_decoder(imm4 = 0, imm3 = 0, imm2 = 0, imm1 = 0, rs1 = 0x00,
+    ECALL.set_asm("ECALL");
+    ECALL.set_decoder(imm4 = 0, imm3 = 0, imm2 = 0, imm1 = 0, rs1 = 0x00,
                       funct3 = 0x0, rd = 0x00, op = 0x73);
 
     SBREAK.set_asm("SBREAK");
@@ -492,8 +518,6 @@ AC_ISA(riscv){
     FSGNJX_D.set_asm("FSGNJX_D %reg, %reg, %reg", rd, rs1, rs2);
     FSGNJX_D.set_decoder(funct7 =  0x11, funct3 = 0x02, op = 0x53);
 
-
-
     FMV_D.set_asm("FMV.D %reg, %reg", rd, rs1);
     FMV_D.set_decoder(funct7 = 0x11, op = 0x53);
 
@@ -505,5 +529,148 @@ AC_ISA(riscv){
 
     FLE_D.set_asm("FLE.D %reg, %reg, %reg", rd, rs1, rs2);
     FLE_D.set_decoder(funct7 = 0x51, funct3 = 0, op = 0x53);
+
+    //RV-V
+    VSETVLI.set_asm("VSETVLI %reg, %reg", rd, rs1);
+    VSETVLI.set_decoder(imm3 = 0x0, funct3 = 0x7, op = 0x57);
+
+    VLE.set_asm("VLE %reg, (%reg)", vd, rs1);
+    VLE.set_decoder(rs2 = 0x0, mop = 0x0, op = 0x7);
+
+    VLSE.set_asm("VLSE %reg, (%reg) %reg", vd, rs1, rs2);
+    VLSE.set_decoder(mop = 0x2, op = 0x7);
+
+    VSE.set_asm("VSE %reg, (%reg)", vd, rs1);
+    VSE.set_decoder(rs2 = 0x0, mop = 0x0, op = 0x27);
+
+    VSSE.set_asm("VSSE %reg, (%reg) %reg", vd, rs1, rs2);
+    VSSE.set_decoder(mop = 0x2, op = 0x27);
+
+    VADDVV.set_asm("VADD.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VADDVV.set_decoder(funct6 = 0x0, funct3 = 0x0, op = 0x57);
+
+    VADDVX.set_asm("VADD.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VADDVX.set_decoder(funct6 = 0x0, funct3 = 0x4, op = 0x57);
+
+    VADDVI.set_asm("VADD.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VADDVI.set_decoder(funct6 = 0x0, funct3 = 0x3, op = 0x57);
+
+    VSUBVV.set_asm("VSUB.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VSUBVV.set_decoder(funct6 = 0x2, funct3 = 0x0, op = 0x57);
+
+    VSUBVX.set_asm("VSUB.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VSUBVX.set_decoder(funct6 = 0x2, funct3 = 0x4, op = 0x57);
+
+    VANDVV.set_asm("VAND.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VANDVV.set_decoder(funct6 = 0x9, funct3 = 0x0, op = 0x57);
+
+    VANDVX.set_asm("VAND.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VANDVX.set_decoder(funct6 = 0x9, funct3 = 0x4, op = 0x57);
+
+    VANDVI.set_asm("VAND.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VANDVI.set_decoder(funct6 = 0x9, funct3 = 0x3, op = 0x57);
+
+    VORVV.set_asm("VOR.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VORVV.set_decoder(funct6 = 0xa, funct3 = 0x0, op = 0x57);
+
+    VORVX.set_asm("VOR.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VORVX.set_decoder(funct6 = 0xa, funct3 = 0x4, op = 0x57);
+
+    VORVI.set_asm("VAND.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VORVI.set_decoder(funct6 = 0xa, funct3 = 0x3, op = 0x57);
+
+    VXORVV.set_asm("VXOR.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VXORVV.set_decoder(funct6 = 0xb, funct3 = 0x0, op = 0x57);
+
+    VXORVX.set_asm("VOR.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VXORVX.set_decoder(funct6 = 0xb, funct3 = 0x4, op = 0x57);
+
+    VXORVI.set_asm("VAND.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VXORVI.set_decoder(funct6 = 0xb, funct3 = 0x3, op = 0x57);
+
+    VMINUVV.set_asm("VMINU.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VMINUVV.set_decoder(funct6 = 0x4, funct3 = 0x0, op = 0x57);
+
+    VMINUVX.set_asm("VMINU.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VMINUVX.set_decoder(funct6 = 0x4, funct3 = 0x4, op = 0x57);
+
+    VMAXUVV.set_asm("VMAXU.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VMAXUVV.set_decoder(funct6 = 0x6, funct3 = 0x0, op = 0x57);
+
+    VMAXUVX.set_asm("VMAXU.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VMAXUVX.set_decoder(funct6 = 0x6, funct3 = 0x4, op = 0x57);
+
+    VSLLVV.set_asm("VSLL.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VSLLVV.set_decoder(funct6 = 0x25, funct3 = 0x0, op = 0x57);
+
+    VSLLVX.set_asm("VSLL.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VSLLVX.set_decoder(funct6 = 0x25, funct3 = 0x4, op = 0x57);
+
+    VSLLVI.set_asm("VSLL.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VSLLVI.set_decoder(funct6 = 0x25, funct3 = 0x3, op = 0x57);
+
+    VSRLVV.set_asm("VSRL.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VSRLVV.set_decoder(funct6 = 0x28, funct3 = 0x0, op = 0x57);
+
+    VSRLVX.set_asm("VSRL.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VSRLVX.set_decoder(funct6 = 0x28, funct3 = 0x4, op = 0x57);
+
+    VSRLVI.set_asm("VSRL.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VSRLVI.set_decoder(funct6 = 0x28, funct3 = 0x3, op = 0x57);
+
+    VMULVV.set_asm("VMUL.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VMULVV.set_decoder(funct6 = 0x25, funct3 = 0x2, op = 0x57);
+
+    VMSEQVV.set_asm("VMSEQ.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSEQVV.set_decoder(funct6 = 0x18, funct3 = 0x0, op = 0x57);
+
+    VMSEQVX.set_asm("VMSEQ.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSEQVX.set_decoder(funct6 = 0x18, funct3 = 0x4, op = 0x57);
+
+    VMSEQVI.set_asm("VMSEQ.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSEQVI.set_decoder(funct6 = 0x18, funct3 = 0x3, op = 0x57);
+
+    VMSNEVV.set_asm("VMSNE.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSNEVV.set_decoder(funct6 = 0x19, funct3 = 0x0, op = 0x57);
+
+    VMSNEVX.set_asm("VMSNE.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSNEVX.set_decoder(funct6 = 0x19, funct3 = 0x4, op = 0x57);
+
+    VMSNEVI.set_asm("VMSNE.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSNEVI.set_decoder(funct6 = 0x19, funct3 = 0x3, op = 0x57);
+
+    VMSLTVV.set_asm("VMSLT.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSLTVV.set_decoder(funct6 = 0x1B, funct3 = 0x0, op = 0x57);
+
+    VMSLTVX.set_asm("VMSLT.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSLTVX.set_decoder(funct6 = 0x1B, funct3 = 0x4, op = 0x57);
+
+    VMSLEVV.set_asm("VMSLE.VV %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSLEVV.set_decoder(funct6 = 0x1D, funct3 = 0x0, op = 0x57);
+
+    VMSLEVX.set_asm("VMSLE.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSLEVX.set_decoder(funct6 = 0x1D, funct3 = 0x4, op = 0x57);
+
+    VMSLEVI.set_asm("VMSLE.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSLEVI.set_decoder(funct6 = 0x1D, funct3 = 0x3, op = 0x57);
+
+    VMSGTVX.set_asm("VMGTE.VX %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSGTVX.set_decoder(funct6 = 0x1F, funct3 = 0x4, op = 0x57);
+
+    VMSGTVI.set_asm("VMGTE.VI %reg, %reg, %reg", vd, rs2, rs1 );
+    VMSGTVI.set_decoder(funct6 = 0x1F, funct3 = 0x3, op = 0x57);
+
+    VMVXS.set_asm("VMV.X.S %reg, %reg", vd, rs2 );
+    VMVXS.set_decoder(funct6 = 0x10, funct3 = 0x2, rs1 = 0x0, vm = 0x1, op = 0x57);
+
+    VMVSX.set_asm("VMV.S.X %reg, %reg", vd, rs1 );
+    VMVSX.set_decoder(funct6 = 0x10, funct3 = 0x6, rs2 = 0x0, vm = 0x1, op = 0x57);
+
+    VREDSUMVS.set_asm("VREDSUM.VS %reg, %reg, %reg", vd, rs2, rs1 );
+    VREDSUMVS.set_decoder(funct6 = 0x0, funct3 = 0x2, op = 0x57);
+
+    VWREDSUMUVS.set_asm("VWREDSUMU.VS %reg, %reg, %reg", vd, rs2, rs1 );
+    VWREDSUMUVS.set_decoder(funct6 = 0x30, funct3 = 0x0, op = 0x57);
+
   };
 };

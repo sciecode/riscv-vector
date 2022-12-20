@@ -20,7 +20,7 @@
 #include <fenv.h>
 
 // Uncomment for debug Information
-//#define DEBUG_MODEL
+#define DEBUG_MODEL
 #include "ac_debug_model.H"
 
 #define Ra 1
@@ -48,21 +48,30 @@ void ac_behavior(Type_S) {}
 void ac_behavior(Type_SB) {}
 void ac_behavior(Type_U) {}
 void ac_behavior(Type_UJ) {}
+void ac_behavior(Type_V) {}
+void ac_behavior(Type_VM) {}
 
 
 // Behavior called before starting simulation
 void ac_behavior(begin) {
   dbg_printf("@@@ begin behavior @@@\n");
 
-  for (int regNum = 0; regNum < 32; regNum++)
-    {
-      RB[regNum] = 0;
-      RBF[regNum] = 0;
-      RBF[regNum+32] = 0;
-    }
-    fcsr = 0;
-    frm = 0;
-    fflags = 0;
+  for (int regNum = 0; regNum < 32; regNum++) {
+    RB[regNum] = 0;
+    RBF[regNum] = 0;
+    RBF[regNum+32] = 0;
+    RBV[regNum] = 0;
+    RBV[regNum+32] = 0;
+    RBV[regNum+64] = 0;
+    RBV[regNum+96] = 0;
+  }
+  fcsr = 0;
+  frm = 0;
+  fflags = 0;
+  vstart = 0;
+  vl = 0;
+  vtype = 0;
+  vlenb = 16; // VLEN / 8 ( 128 / 8 )
 }
 
 
@@ -370,9 +379,9 @@ void ac_behavior(SRAI) {
   dbg_printf("Result = %#x\n\n", RB[rd]);
 }
 
-// Instruction SCALL behavior method.
-void ac_behavior(SCALL) {
-  dbg_printf("SCALL\n");
+// Instruction ECALL behavior method.
+void ac_behavior(ECALL) {
+  dbg_printf("ECALL\n");
   printf("System Call\n\n");
   stop();
 }
@@ -1447,4 +1456,1908 @@ void ac_behavior(FLT_D) {
   else
     RB[rd] = 0;
   dbg_printf("Result = %d \n \n", RB[rd]);
+}
+
+
+// Instruction VSETVLI behavior method
+void ac_behavior(VSETVLI) {
+
+  vtype = (imm2 & 0x1f);
+
+  int sewf8 = 1 << ( vtype >> 3 );
+  int lmul = 1 << ( vtype & 0x7 );
+  int vlmax = lmul * ( vlenb & 0xff ) / sewf8;
+  int avl = RB[rs1];
+
+  vl = ( avl < vlmax ) ? avl : vlmax;
+  RB[rd] = vl;
+
+  dbg_printf("VSETVLI r%d, r%d, e%d, m%d\n", rd, rs1, 8 * sewf8, lmul );
+  dbg_printf("VL = %d\n\n", RB[rd] );
+
+}
+
+
+// Instruction VLE behavior method
+void ac_behavior(VLE) {
+
+  int eew;
+  int addr = RB[rs1];
+  v128 *v = ( v128 * ) &RBV[ 4 * vd ];
+
+  if ( funct3 == 0 ) {
+    eew = 1;
+  } else if ( funct3 == 5 ) {
+    eew = 2;
+  } else if ( funct3 == 6 ) {
+    eew = 4;
+  }
+
+  int vlmax = 128 / ( 8 * eew );
+  
+  dbg_printf("VLE%d.v v%d, (%d)\n", 8 * eew, vd, addr );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( eew == 1 ) {
+      v->set8( idx, DM.read_byte( addr + el * eew ) );
+    } else if ( eew == 2 ) {
+      v->set16( idx, DM.read_half( addr + el * eew ) );
+    } else if ( eew == 4 ) {
+      v->set32( idx, DM.read( addr + el * eew ) );
+    }
+
+    if ( idx == vlmax-1 ) v++;
+
+  }
+
+  v = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * eew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v->w[ i ]);
+    if ( i == 3 ) v++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * eew);
+
+}
+
+// Instruction VLSE behavior method
+void ac_behavior(VLSE) {
+
+  int eew;
+  int addr = RB[rs1];
+  int stride = RB[rs2];
+  v128 *v = ( v128 * ) &RBV[ 4 * vd ];
+
+  if ( funct3 == 0 ) {
+    eew = 1;
+  } else if ( funct3 == 5 ) {
+    eew = 2;
+  } else if ( funct3 == 6 ) {
+    eew = 4;
+  }
+
+  int vlmax = 128 / ( 8 * eew );
+  
+  dbg_printf("VLSE%d.v v%d, (%d), %d\n", 8 * eew, vd, addr, rs2 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( eew == 1 ) {
+      v->set8( idx, DM.read_byte( addr + el * stride ) );
+    } else if ( eew == 2 ) {
+      v->set16( idx, DM.read_half( addr + el * stride ) );
+    } else if ( eew == 4 ) {
+      v->set32( idx, DM.read( addr + el * stride ) );
+    }
+
+    if ( idx == vlmax-1 ) v++;
+
+  }
+
+  v = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * eew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v->w[ i ]);
+    if ( i == 3 ) v++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * eew);
+
+}
+
+// Instruction VSE behavior method
+void ac_behavior(VSE) {
+
+  int eew;
+  int addr = RB[rs1];
+  v128 *v = ( v128 * ) &RBV[ 4 * vd ];
+
+  if ( funct3 == 0 ) {
+    eew = 1;
+  } else if ( funct3 == 5 ) {
+    eew = 2;
+  } else if ( funct3 == 6 ) {
+    eew = 4;
+  }
+
+  int vlmax = 128 / ( 8 * eew );
+  
+  dbg_printf("VSE%d.v v%d, (%d)\n", 8 * eew, vd, addr );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( eew == 1 ) {
+      DM.write_byte( addr + el * eew, v->get8( idx ) );
+    } else if ( eew == 2 ) {
+      DM.write_half( addr + el * eew, v->get16( idx ) );
+    } else if ( eew == 4 ) {
+      DM.write( addr + el * eew, v->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) v++;
+
+  }
+
+  for( int c = 0; c < ( vl * eew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("M[%d] = %d\n", addr + c * 4, DM.read( addr + c * 4 ) );
+    if ( i == 3 ) v++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * eew);
+
+}
+
+// Instruction VSSE behavior method
+void ac_behavior(VSSE) {
+
+  int eew;
+  int addr = RB[rs1];
+  int stride = RB[rs2];
+  v128 *v = ( v128 * ) &RBV[ 4 * vd ];
+
+  if ( funct3 == 0 ) {
+    eew = 1;
+  } else if ( funct3 == 5 ) {
+    eew = 2;
+  } else if ( funct3 == 6 ) {
+    eew = 4;
+  }
+
+  int vlmax = 128 / ( 8 * eew );
+  
+  dbg_printf("VSSE%d.v v%d, (%d) r%d\n", 8 * eew, vd, addr, rs2 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( eew == 1 ) {
+      DM.write_byte( addr + el * stride, v->get8( idx ) );
+    } else if ( eew == 2 ) {
+      DM.write_half( addr + el * stride, v->get16( idx ) );
+    } else if ( eew == 4 ) {
+      DM.write( addr + el * stride, v->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) v++;
+
+  }
+
+  for( int c = 0; c < ( vl * eew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("M[%d] = %d\n", addr + c * 4, DM.read( addr + c * 4 ) );
+    if ( i == 3 ) v++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * eew);
+
+}
+
+// Instruction VADDVV behavior method
+void ac_behavior(VADDVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VADD.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) + ( int8_t ) v2->get8( idx ) );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) + ( int16_t ) v2->get16( idx ) );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) + ( int32_t ) v2->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VSUBVV behavior method
+void ac_behavior(VSUBVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VSUB.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v2->get8( idx ) - ( int8_t ) v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v2->get16( idx ) - ( int16_t ) v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v2->get32( idx ) - ( int32_t ) v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMULVV behavior method
+void ac_behavior(VMULVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 16 / ( sew );
+  
+  dbg_printf("VMUL.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v2->get8( idx ) * ( int8_t ) v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v2->get16( idx ) * ( int16_t ) v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v2->get32( idx ) * ( int32_t ) v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VADDVX behavior method
+void ac_behavior(VADDVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VADD.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) + ( int8_t ) RB[rs1] );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) + ( int16_t ) RB[rs1] );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) + ( int32_t ) RB[rs1] );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VSUBVX behavior method
+void ac_behavior(VSUBVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VSUB.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) - ( int8_t ) RB[rs1] );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) - ( int16_t ) RB[rs1] );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) - ( int32_t ) RB[rs1] );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VADDVI behavior method
+void ac_behavior(VADDVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = sign_extend( rs1, 5 );
+  
+  dbg_printf("VADD.VI v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) + imm );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) + imm );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) + imm );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VANDVV behavior method
+void ac_behavior(VANDVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VAND.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v2->get8( idx ) & ( int8_t ) v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v2->get16( idx ) & ( int16_t ) v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v2->get32( idx ) & ( int32_t ) v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VANDVX behavior method
+void ac_behavior(VANDVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VAND.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) & ( int8_t ) RB[rs1] );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) & ( int16_t ) RB[rs1] );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) & ( int32_t ) RB[rs1] );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VANDVI behavior method
+void ac_behavior(VANDVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = sign_extend( rs1, 5 );
+  
+  dbg_printf("VAND.VI v%d, v%d, %d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) & imm );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) & imm );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) & imm );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VORVV behavior method
+void ac_behavior(VORVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VOR.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v2->get8( idx ) | ( int8_t ) v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v2->get16( idx ) | ( int16_t ) v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v2->get32( idx ) | ( int32_t ) v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VORVX behavior method
+void ac_behavior(VORVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VOR.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) | ( int8_t ) RB[rs1] );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) | ( int16_t ) RB[rs1] );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) | ( int32_t ) RB[rs1] );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VORVI behavior method
+void ac_behavior(VORVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = sign_extend( rs1, 5 );
+  
+  dbg_printf("VOR.VI v%d, v%d, %d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) | imm );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) | imm );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) | imm );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VXORVV behavior method
+void ac_behavior(VXORVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VXOR.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v2->get8( idx ) ^ ( int8_t ) v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v2->get16( idx ) ^ ( int16_t ) v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v2->get32( idx ) ^ ( int32_t ) v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VXORVX behavior method
+void ac_behavior(VXORVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VXOR.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) ^ ( int8_t ) RB[rs1] );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) ^ ( int16_t ) RB[rs1] );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) ^ ( int32_t ) RB[rs1] );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VXORVI behavior method
+void ac_behavior(VXORVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = sign_extend( rs1, 5 );
+  
+  dbg_printf("VXOR.VI v%d, v%d, %d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( int8_t ) v1->get8( idx ) ^ imm );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( int16_t ) v1->get16( idx ) ^ imm );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( int32_t ) v1->get32( idx ) ^ imm );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMINUVV behavior method
+void ac_behavior(VMINUVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMINU.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      if ( v2->get8( idx ) < v1->get8( idx ) )
+        v0->set8( idx, v2->get8( idx ) );
+      else
+        v0->set8( idx, v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      if ( v2->get16( idx ) < v1->get16( idx ) )
+        v0->set16( idx, v2->get16( idx ) );
+      else
+        v0->set16( idx, v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      if ( v2->get32( idx ) < v1->get32( idx ) )
+        v0->set32( idx, v2->get32( idx ) );
+      else
+        v0->set32( idx, v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMINUVX behavior method
+void ac_behavior(VMINUVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMINU.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      if ( ( uint8_t ) RB[rs1] < v1->get8( idx ) )
+        v0->set8( idx, ( uint8_t ) RB[rs1] );
+      else
+        v0->set8( idx, v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      if ( ( uint16_t ) RB[rs1] < v1->get16( idx ) )
+        v0->set16( idx, ( uint16_t ) RB[rs1] );
+      else
+        v0->set16( idx, v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      if ( ( uint32_t ) RB[rs1] < v1->get32( idx ) )
+        v0->set32( idx, ( uint32_t ) RB[rs1] );
+      else
+        v0->set32( idx, v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMAXUVV behavior method
+void ac_behavior(VMAXUVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMAXU.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      if ( v2->get8( idx ) > v1->get8( idx ) )
+        v0->set8( idx, v2->get8( idx ) );
+      else
+        v0->set8( idx, v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      if ( v2->get16( idx ) > v1->get16( idx ) )
+        v0->set16( idx, v2->get16( idx ) );
+      else
+        v0->set16( idx, v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      if ( v2->get32( idx ) > v1->get32( idx ) )
+        v0->set32( idx, v2->get32( idx ) );
+      else
+        v0->set32( idx, v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMAXUVX behavior method
+void ac_behavior(VMAXUVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMAXU.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      if ( ( uint8_t ) RB[rs1] > v1->get8( idx ) )
+        v0->set8( idx, ( uint8_t ) RB[rs1] );
+      else
+        v0->set8( idx, v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      if ( ( uint16_t ) RB[rs1] > v1->get16( idx ) )
+        v0->set16( idx, ( uint16_t ) RB[rs1] );
+      else
+        v0->set16( idx, v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      if ( ( uint32_t ) RB[rs1] > v1->get32( idx ) )
+        v0->set32( idx, ( uint32_t ) RB[rs1] );
+      else
+        v0->set32( idx, v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMVXS behavior method
+void ac_behavior(VMVXS) {
+
+  int copy;
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  dbg_printf("VMV.X.S r%d, v%d\n", vd, rs2 );
+  dbg_printf("RB[%d] = v%d[0]\n", vd, rs2 );
+
+  if ( sew == 1 ) {
+    copy = sign_extend( v0->get8( 0 ), 8 );
+  } else if ( sew == 2 ) {
+    copy = sign_extend( v0->get16( 0 ), 16 );
+  } else if ( sew == 4 ) {
+    copy = ( int32_t ) v0->get32( 0 );
+  }
+
+  RB[vd] = copy;
+
+  dbg_printf("RB[%d] = %d\n\n", vd, RB[vd]);
+
+}
+
+// Instruction VSLLVV behavior method
+void ac_behavior(VSLLVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VSLL.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, v2->get8( idx ) << ( uint8_t ) v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, v2->get16( idx ) << ( uint16_t ) v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, v2->get32( idx ) << ( uint32_t ) v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VSLLVX behavior method
+void ac_behavior(VSLLVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VSLL.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, v1->get8( idx ) << ( uint8_t ) RB[rs1] );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, v1->get16( idx ) << ( uint16_t ) RB[rs1] );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, v1->get32( idx ) << ( uint32_t ) RB[rs1] );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VSLLVI behavior method
+void ac_behavior(VSLLVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = rs1;
+  
+  dbg_printf("VSLL.VI v%d, v%d, %d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, v1->get8( idx ) << imm );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, v1->get16( idx ) << imm );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, v1->get32( idx ) << imm );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VSRLVV behavior method
+void ac_behavior(VSRLVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VSRL.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, v2->get8( idx ) >> ( uint8_t ) v1->get8( idx ) );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, v2->get16( idx ) >> ( uint16_t ) v1->get16( idx ) );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, v2->get32( idx ) >> ( uint32_t ) v1->get32( idx ) );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VSRLVX behavior method
+void ac_behavior(VSRLVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VSRL.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, v1->get8( idx ) >> ( uint8_t ) RB[rs1] );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, v1->get16( idx ) >> ( uint16_t ) RB[rs1] );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, v1->get32( idx ) >> ( uint32_t ) RB[rs1] );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VSRLVI behavior method
+void ac_behavior(VSRLVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = rs1;
+  
+  dbg_printf("VSRL.VI v%d, v%d, %d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, v1->get8( idx ) >> imm );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, v1->get16( idx ) >> imm );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, v1->get32( idx ) >> imm );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMVSX behavior method
+void ac_behavior(VMVSX) {
+
+  int copy = RB[rs1];
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+
+  dbg_printf("VMV.S.X v%d, r%d\n", vd, rs1 );
+  dbg_printf("v%d[0] = RB[%d]\n", vd, rs1 );
+
+  if ( sew == 1 ) {
+    v0->set8( 0, copy );
+    dbg_printf("v%d[0] = %d\n\n", vd, v0->get8( 0 ) );
+  } else if ( sew == 2 ) {
+    v0->set16( 0, copy );
+    dbg_printf("v%d[0] = %d\n\n", vd, v0->get16( 0 ) );
+  } else if ( sew == 4 ) {
+    v0->set32( 0, copy );
+    dbg_printf("v%d[0] = %d\n\n", vd, v0->get32( 0 ) );
+  }
+
+}
+
+// Instruction VMSEQVV behavior method
+void ac_behavior(VMSEQVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSEQ.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v2->get8( idx ) == ( uint8_t ) v1->get8( idx ) ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v2->get16( idx ) == ( uint16_t ) v1->get16( idx ) ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v2->get32( idx ) == ( uint32_t ) v1->get32( idx ) ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSEQVX behavior method
+void ac_behavior(VMSEQVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSEQ.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) == ( uint8_t ) RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) == ( uint16_t ) RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) == ( uint32_t ) RB[rs1] ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSEQVI behavior method
+void ac_behavior(VMSEQVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = sign_extend( rs1, 5 );
+  
+  dbg_printf("VMSEQ.VI v%d, v%d, r%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) == imm ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) == imm ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) == imm ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSNEVV behavior method
+void ac_behavior(VMSNEVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSNE.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v2->get8( idx ) != ( uint8_t ) v1->get8( idx ) ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v2->get16( idx ) != ( uint16_t ) v1->get16( idx ) ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v2->get32( idx ) != ( uint32_t ) v1->get32( idx ) ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSNEVX behavior method
+void ac_behavior(VMSNEVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSNE.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) != ( uint8_t ) RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) != ( uint16_t ) RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) != ( uint32_t ) RB[rs1] ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSNEVI behavior method
+void ac_behavior(VMSNEVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = sign_extend( rs1, 5 );
+  
+  dbg_printf("VMSNE.VI v%d, v%d, r%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) != imm ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) != imm ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) != imm ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSLTVV behavior method
+void ac_behavior(VMSLTVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSLT.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v2->get8( idx ) < v1->get8( idx ) ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v2->get16( idx ) < v1->get16( idx ) ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v2->get32( idx ) < v1->get32( idx ) ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSLTVX behavior method
+void ac_behavior(VMSLTVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSLT.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) < RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) < RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) < RB[rs1] ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSLEVV behavior method
+void ac_behavior(VMSLEVV) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSLE.VV v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v2->get8( idx ) <= v1->get8( idx ) ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v2->get16( idx ) <= v1->get16( idx ) ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v2->get32( idx ) <= v1->get32( idx ) ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++; v2++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSLEVX behavior method
+void ac_behavior(VMSLEVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSLE.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) <= RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) <= RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) <= RB[rs1] ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSLEVI behavior method
+void ac_behavior(VMSLEVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = sign_extend( rs1, 5 );
+  
+  dbg_printf("VMSLE.VI v%d, v%d, r%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) <= imm ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) <= imm ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) <= imm ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSGTVX behavior method
+void ac_behavior(VMSGTVX) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  
+  dbg_printf("VMSGT.VX v%d, v%d, r%d\n", vd, rs2, rs1 );
+  dbg_printf("RB[rs1] = %d\n", RB[rs1]);
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) > RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) > RB[rs1] ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) > RB[rs1] ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VMSGTVI behavior method
+void ac_behavior(VMSGTVI) {
+
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+
+  int vlmax = 128 / ( 8 * sew );
+  int imm = sign_extend( rs1, 5 );
+  
+  dbg_printf("VMSGT.VI v%d, v%d, r%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      v0->set8( idx, ( v1->get8( idx ) > imm ) ? 1 : 0 );
+    } else if ( sew == 2 ) {
+      v0->set16( idx, ( v1->get16( idx ) > imm ) ? 1 : 0 );
+    } else if ( sew == 4 ) {
+      v0->set32( idx, ( v1->get32( idx ) > imm ) ? 1 : 0 );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v0++; v1++;
+    }
+
+  }
+
+  v0 = ( v128 * ) &RBV[ 4 * vd ];
+  for( int c = 0; c < ( vl * sew ) / 4; c++ ) {
+    int i = c % 4;
+    dbg_printf("v%d[%d] = %d\n", vd + c/4, i, v0->w[ i ]);
+    if ( i == 3 ) v0++;
+  }
+  dbg_printf("bytes = %d\n\n", vl * sew);
+
+}
+
+// Instruction VREDSUMVS behavior method
+void ac_behavior(VREDSUMVS) {
+
+  int sum;
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 16 / sew;
+ 
+  // current sum vs1[0]
+  if ( sew == 1 ) {
+    sum = sign_extend( v1->get8( 0 ), 8 );
+  } else if ( sew == 2 ) {
+    sum = sign_extend( v1->get16( 0 ), 16 );
+  } else if ( sew == 4 ) {
+    sum = v1->get32( 0 );
+  }
+  
+  dbg_printf("VREDSUM.VS v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      sum += sign_extend( v2->get8( idx ), 8 );
+    } else if ( sew == 2 ) {
+      sum += sign_extend( v2->get16( idx ), 16 );
+    } else if ( sew == 4 ) {
+      sum += ( int8_t ) v2->get32( idx );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v2++;
+    }
+
+  }
+
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+
+  if ( sew == 1 ) {
+    v0->set8( 0, sum );
+    dbg_printf("v%d[0] = %d\n\n", vd, ( int8_t ) v0->get8( 0 ) );
+  } else if ( sew == 2 ) {
+    v0->set16( 0, sum );
+    dbg_printf("v%d[0] = %d\n\n", vd, ( int16_t ) v0->get16( 0 ) );
+  } else if ( sew == 4 ) {
+    v0->set32( 0, sum );
+    dbg_printf("v%d[0] = %d\n\n", vd, ( int32_t )  v0->get32( 0 ) );
+  }
+
+}
+
+// Instruction VWREDSUMUVS behavior method
+void ac_behavior(VWREDSUMUVS) {
+
+  int sum;
+  int sew = 1 << ( vtype >> 3 );
+  v128 *v1 = ( v128 * ) &RBV[ 4 * rs1 ];
+  v128 *v2 = ( v128 * ) &RBV[ 4 * rs2 ];
+
+  int vlmax = 16 / sew;
+ 
+  // 2 * SEW - current sum vs1[0]
+  if ( sew == 1 ) {
+    sum = v1->get16( 0 );
+  } else if ( sew == 2 ) {
+    sum = v1->get32( 0 );
+  }
+  
+  dbg_printf("VWREDSUMU.VS v%d, v%d, v%d\n", vd, rs2, rs1 );
+
+  for (int el = 0; el < vl; el++) {
+
+    int idx = el % vlmax;
+
+    if ( sew == 1 ) {
+      sum += v2->get8( idx );
+    } else if ( sew == 2 ) {
+      sum += v2->get16( idx );
+    }
+
+    if ( idx == vlmax-1 ) {
+      v2++;
+    }
+
+  }
+
+  v128 *v0 = ( v128 * ) &RBV[ 4 * vd ];
+
+  if ( sew == 1 ) {
+    v0->set16( 0, sum );
+    dbg_printf("v%d[0] = %d\n\n", vd, v0->get16( 0 ) );
+  } else if ( sew == 2 ) {
+    v0->set32( 0, sum );
+    dbg_printf("v%d[0] = %d\n\n", vd, v0->get32( 0 ) );
+  }
+
 }
